@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio backend — live mic test</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 720px;
+        margin: 32px auto;
+        padding: 0 20px;
+        line-height: 1.45;
+      }
+      h1 {
+        font-size: 1.35rem;
+        margin-bottom: 4px;
+      }
+      .hint {
+        color: #777;
+        font-size: 0.85rem;
+        margin-top: 0;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin: 12px 0;
+      }
+      input[type="text"] {
+        flex: 1 1 260px;
+        padding: 8px 10px;
+        font-size: 14px;
+        border: 1px solid #bbb;
+        border-radius: 6px;
+      }
+      button {
+        padding: 9px 16px;
+        font-size: 15px;
+        cursor: pointer;
+        border: 1px solid #999;
+        border-radius: 6px;
+        background: #fafafa;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      button.primary {
+        background: #2563eb;
+        border-color: #1d4ed8;
+        color: #fff;
+      }
+      button.danger {
+        background: #dc2626;
+        border-color: #b91c1c;
+        color: #fff;
+      }
+      #status {
+        font-weight: 600;
+        margin: 10px 0;
+        color: #555;
+      }
+      #meta {
+        font:
+          12px/1.6 ui-monospace,
+          Consolas,
+          monospace;
+        color: #666;
+        white-space: pre-wrap;
+      }
+      .meter {
+        height: 10px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        overflow: hidden;
+        background: #eee;
+      }
+      .meter > i {
+        display: block;
+        height: 100%;
+        width: 0%;
+        background: #16a34a;
+        transition: width 60ms linear;
+      }
+      #transcript {
+        min-height: 64px;
+        border: 1px solid #ddd;
+        border-left: 4px solid #2563eb;
+        border-radius: 6px;
+        padding: 12px 14px;
+        background: #f8fafc;
+        font-size: 1.05rem;
+      }
+      #transcript:empty::before {
+        content: "— no result yet —";
+        color: #999;
+      }
+      #log {
+        background: #111827;
+        color: #e5e7eb;
+        padding: 14px;
+        border-radius: 8px;
+        height: 260px;
+        overflow-y: auto;
+        font:
+          12px/1.55 ui-monospace,
+          Consolas,
+          monospace;
+      }
+      #log div {
+        margin-bottom: 3px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #log .out {
+        color: #7dd3fc;
+      }
+      #log .in {
+        color: #a5b4fc;
+      }
+      #log .ok {
+        color: #86efac;
+      }
+      #log .warn {
+        color: #fcd34d;
+      }
+      #log .err {
+        color: #fca5a5;
+      }
+      details {
+        margin-top: 14px;
+        font-size: 0.85rem;
+        color: #555;
+      }
+      code {
+        background: #f2f2f2;
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Live voice → text</h1>
+    <p class="hint">
+      Streams your microphone as raw <code>pcm_s16le</code> binary frames to
+      <code>ws://localhost:8000/ws/audio</code> and prints what Whisper returns.
+    </p>
+
+    <div class="row">
+      <input type="text" id="wsUrl" value="ws://localhost:8000/ws/audio" />
+      <button id="btnConnect" class="primary">Connect</button>
+      <button id="btnDisconnect" class="danger" disabled>Disconnect</button>
+    </div>
+
+    <div class="row">
+      <button id="btnRecord" disabled>Record</button>
+      <button id="btnStop" disabled>Stop &amp; Transcribe</button>
+      <button id="btnPing" disabled>Ping</button>
+      <button id="btnReset" disabled>Reset buffer</button>
+      <button id="btnClear">Clear log</button>
+    </div>
+
+    <p id="status">Status: disconnected</p>
+    <div class="meter"><i id="level"></i></div>
+    <div id="meta"></div>
+
+    <h3>Transcription</h3>
+    <div id="transcript"></div>
+
+    <h3>Protocol log</h3>
+    <div id="log"></div>
+
+    <details>
+      <summary>What to expect</summary>
+      <p>
+        <strong>Connect</strong> opens the socket, waits for the server's
+        <code>ready</code> frame, then asks for microphone access and sends
+        <code>start</code> with the real capture rate.
+        <strong>Record</strong> begins a new utterance,
+        <strong>Stop &amp; Transcribe</strong> sends <code>stop</code> and waits
+        for the <code>result</code> frame — the socket stays open, so you can
+        transcribe again without reconnecting.
+      </p>
+      <p>
+        The server also echoes each transcription to its own console as
+        <code>[transcribe] 1.23s -&gt; …</code>. Utterances are capped at
+        <code>maxSeconds</code> (30 by default) — past that the backend drops
+        the buffer with <code>buffer_full</code>.
+      </p>
+    </details>
+
+    <script>
+      "use strict";
+
+      // Runs inside the audio thread. Forwards every rendered block of mono
+      // Float32 samples to the main thread; outputs stay silent on purpose.
+      const WORKLET_SOURCE = `
+      class PcmTap extends AudioWorkletProcessor {
+        process(inputs) {
+          const input = inputs[0];
+          if (input && input[0] && input[0].length) {
+            this.port.postMessage(input[0].slice(0));  // copy: the buffer is reused
+          }
+          return true;
+        }
+      }
+      registerProcessor('pcm-tap', PcmTap);
+    `;
+
+      const FLUSH_INTERVAL_MS = 100; // ~100 ms binary frames
+      const BATCH_SAMPLES = 1600; // send when this many samples accumulate
+
+      const wsUrlInput = document.getElementById("wsUrl");
+      const btnConnect = document.getElementById("btnConnect");
+      const btnDisconnect = document.getElementById("btnDisconnect");
+      const btnRecord = document.getElementById("btnRecord");
+      const btnStop = document.getElementById("btnStop");
+      const btnPing = document.getElementById("btnPing");
+      const btnReset = document.getElementById("btnReset");
+      const btnClear = document.getElementById("btnClear");
+      const statusEl = document.getElementById("status");
+      const metaEl = document.getElementById("meta");
+      const levelEl = document.getElementById("level");
+      const logEl = document.getElementById("log");
+      const transcriptEl = document.getElementById("transcript");
+
+      let socket = null;
+      let audioContext = null;
+      let mediaStream = null;
+      let tapNode = null;
+      let sourceNode = null;
+      let legacyProcessor = null;
+
+      let pending = []; // queued Float32Array chunks
+      let pendingSamples = 0;
+      let flushTimer = null;
+      let tickTimer = null;
+
+      let recording = false; // server confirmed "started" and we are streaming
+      let startedAt = 0;
+      let limits = null;
+      let framesSent = 0;
+      let bytesSent = 0;
+
+      function say(kind, message) {
+        const line = document.createElement("div");
+        line.className = kind;
+        line.textContent = message;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function setStatus(text) {
+        statusEl.textContent = `Status: ${text}`;
+      }
+
+      function refreshMeta(extra) {
+        const parts = [];
+        if (audioContext)
+          parts.push(`capture: ${audioContext.sampleRate} Hz mono`);
+        if (recording)
+          parts.push(
+            `recording: ${((performance.now() - startedAt) / 1000).toFixed(1)}s`,
+          );
+        parts.push(`frames: ${framesSent} (${bytesSent} bytes)`);
+        if (limits)
+          parts.push(`max: ${limits.maxSeconds}s  min: ${limits.minSeconds}s`);
+        if (extra) parts.push(extra);
+        metaEl.textContent = parts.join("   |   ");
+      }
+
+      function setButtons(state) {
+        btnConnect.disabled = state !== "idle";
+        btnDisconnect.disabled = state === "idle";
+        btnRecord.disabled = state !== "ready";
+        btnStop.disabled = state !== "recording";
+        btnPing.disabled = state === "idle";
+        btnReset.disabled = state === "idle";
+        wsUrlInput.disabled = state !== "idle";
+      }
+
+      // ---------------- audio → pcm_s16le ----------------
+
+      function enqueue(float32) {
+        let peak = 0;
+        for (let i = 0; i < float32.length; i += 8) {
+          const v = Math.abs(float32[i]);
+          if (v > peak) peak = v;
+        }
+        levelEl.style.width = `${Math.min(100, Math.round(peak * 140))}%`;
+
+        if (!recording) return;
+        pending.push(float32);
+        pendingSamples += float32.length;
+        if (pendingSamples >= BATCH_SAMPLES) flushAudio();
+      }
+
+      // The backend reads "<i2" and scales by 1/32768, so we quantise the same way.
+      function flushAudio(force) {
+        if (!pendingSamples || !socket || socket.readyState !== WebSocket.OPEN)
+          return;
+        if (!recording && !force) return;
+
+        const int16 = new Int16Array(pendingSamples);
+        let offset = 0;
+        for (const chunk of pending) {
+          for (let i = 0; i < chunk.length; i += 1) {
+            const clamped = Math.max(-1, Math.min(1, chunk[i]));
+            // 32768 would overflow int16, so keep the positive side at 32767.
+            int16[offset++] = Math.max(
+              -32768,
+              Math.min(32767, Math.round(clamped * 32768)),
+            );
+          }
+        }
+        pending = [];
+        pendingSamples = 0;
+
+        socket.send(int16.buffer);
+        framesSent += 1;
+        bytesSent += int16.byteLength;
+        refreshMeta();
+      }
+
+      async function openMicrophone() {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+
+        try {
+          audioContext = new AudioContext({ sampleRate: 16000 });
+        } catch {
+          audioContext = new AudioContext(); // rate unsupported: backend resamples anyway
+        }
+        if (audioContext.state === "suspended") await audioContext.resume();
+
+        sourceNode = audioContext.createMediaStreamSource(mediaStream);
+
+        try {
+          const blobUrl = URL.createObjectURL(
+            new Blob([WORKLET_SOURCE], { type: "application/javascript" }),
+          );
+          await audioContext.audioWorklet.addModule(blobUrl);
+          URL.revokeObjectURL(blobUrl);
+          tapNode = new AudioWorkletNode(audioContext, "pcm-tap", {
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+          });
+          tapNode.port.onmessage = (event) => enqueue(event.data);
+        } catch (error) {
+          say(
+            "warn",
+            "AudioWorklet unavailable, falling back to ScriptProcessor.",
+          );
+          legacyProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+          legacyProcessor.onaudioprocess = (event) => {
+            const out = event.outputBuffer.getChannelData(0);
+            out.fill(0); // keep the monitor silent
+            enqueue(event.inputBuffer.getChannelData(0));
+          };
+          tapNode = legacyProcessor;
+        }
+
+        sourceNode.connect(tapNode);
+        tapNode.connect(audioContext.destination);
+        say(
+          "ok",
+          `microphone open @ ${audioContext.sampleRate} Hz, ~${(audioContext.baseLatency * 1000).toFixed(0)} ms latency`,
+        );
+      }
+
+      function closeMicrophone() {
+        clearInterval(flushTimer);
+        clearInterval(tickTimer);
+        flushTimer = tickTimer = null;
+        if (tapNode) tapNode.disconnect();
+        if (sourceNode) sourceNode.disconnect();
+        if (legacyProcessor) legacyProcessor.disconnect();
+        if (mediaStream)
+          mediaStream.getTracks().forEach((track) => track.stop());
+        if (audioContext && audioContext.state !== "closed")
+          audioContext.close();
+        tapNode =
+          sourceNode =
+          legacyProcessor =
+          mediaStream =
+          audioContext =
+            null;
+        pending = [];
+        pendingSamples = 0;
+        levelEl.style.width = "0%";
+      }
+
+      // ---------------- protocol ----------------
+
+      function sendJson(payload) {
+        socket.send(JSON.stringify(payload));
+        say("out", `→ ${JSON.stringify(payload)}`);
+      }
+
+      function startRecording() {
+        if (!socket || socket.readyState !== WebSocket.OPEN || recording)
+          return;
+        pending = [];
+        pendingSamples = 0;
+        framesSent = 0;
+        bytesSent = 0;
+        sendJson({
+          type: "start",
+          format: { sampleRate: audioContext.sampleRate, channels: 1 },
+        });
+      }
+
+      function stopRecording() {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        flushAudio(true); // push whatever is still buffered, before the flag drops
+        recording = false;
+        clearInterval(flushTimer);
+        clearInterval(tickTimer);
+        flushTimer = tickTimer = null;
+        sendJson({ type: "stop" });
+        setStatus("transcribing…");
+        setButtons("ready");
+      }
+
+      // The backend drops the whole utterance at maxSeconds, so stop a bit earlier.
+      function watchDuration() {
+        if (!recording || !limits) return;
+        const elapsed = (performance.now() - startedAt) / 1000;
+        if (elapsed >= limits.maxSeconds - 0.5) {
+          say(
+            "warn",
+            `reached ${limits.maxSeconds}s limit — stopping automatically`,
+          );
+          stopRecording();
+        }
+      }
+
+      function handleControl(message) {
+        say("in", `← ${JSON.stringify(message)}`);
+
+        switch (message.type) {
+          case "ready":
+            limits = message.limits;
+            setButtons("ready");
+            btnRecord.disabled = true; // enabled once the mic is open
+            setStatus("connected — opening microphone");
+            openMicrophone()
+              .then(startRecording)
+              .catch((error) => {
+                say("err", `microphone failed: ${error.message}`);
+                setStatus("mic permission denied");
+              });
+            break;
+
+          case "started":
+            recording = true;
+            startedAt = performance.now();
+            flushTimer = setInterval(() => flushAudio(), FLUSH_INTERVAL_MS);
+            tickTimer = setInterval(watchDuration, 250);
+            btnRecord.disabled = true;
+            btnStop.disabled = false;
+            setStatus("recording — speak now");
+            setButtons("recording");
+            break;
+
+          case "processing":
+            setStatus(`buffered ${message.duration}s — sending to model`);
+            break;
+
+          case "result": {
+            const text = message.text ?? "";
+            transcriptEl.textContent =
+              text || "(empty — the engine heard no speech)";
+            const info = message.data || {};
+            if (info.language)
+              say(
+                "ok",
+                `language: ${info.language} (${((info.languageProbability ?? 0) * 100).toFixed(0)}%)`,
+              );
+            setStatus("result received — press Record to go again");
+            setButtons("ready");
+            break;
+          }
+
+          case "error":
+            say("err", `error [${message.code}] ${message.message}`);
+            setStatus(`error: ${message.code}`);
+            if (
+              ["buffer_full", "too_short", "not_started"].includes(message.code)
+            ) {
+              recording = false;
+              clearInterval(flushTimer);
+              clearInterval(tickTimer);
+              flushTimer = tickTimer = null;
+              setButtons("ready");
+            }
+            break;
+
+          case "pong":
+            setStatus("connected (pong)");
+            break;
+
+          case "reset":
+            say("warn", "buffer cleared");
+            break;
+
+          default:
+            break;
+        }
+      }
+
+      function connect() {
+        const url = wsUrlInput.value.trim();
+        transcriptEl.textContent = "";
+        say("ok", `connecting to ${url}`);
+
+        socket = new WebSocket(url);
+        socket.binaryType = "arraybuffer";
+
+        socket.onopen = () => setStatus('socket open — waiting for "ready"');
+        socket.onmessage = (event) => {
+          if (typeof event.data !== "string") return; // the server only sends JSON
+          try {
+            handleControl(JSON.parse(event.data));
+          } catch (error) {
+            say("err", `bad frame: ${error.message}`);
+          }
+        };
+        socket.onerror = () =>
+          say("err", "socket error — is uvicorn running on port 8000?");
+        socket.onclose = () => {
+          recording = false;
+          closeMicrophone();
+          setButtons("idle");
+          setStatus("disconnected");
+          refreshMeta();
+        };
+        setButtons("connecting");
+      }
+
+      function disconnect() {
+        recording = false;
+        closeMicrophone();
+        if (socket) {
+          socket.close();
+          socket = null;
+        }
+        setButtons("idle");
+        setStatus("disconnected");
+        refreshMeta();
+      }
+
+      btnConnect.onclick = connect;
+      btnDisconnect.onclick = disconnect;
+      btnRecord.onclick = startRecording;
+      btnStop.onclick = stopRecording;
+      btnPing.onclick = () => socket && sendJson({ type: "ping" });
+      btnReset.onclick = () => socket && sendJson({ type: "reset" });
+      btnClear.onclick = () => {
+        logEl.textContent = "";
+      };
+
+      window.addEventListener("beforeunload", () => {
+        if (socket) socket.close();
+      });
+      setButtons("idle");
+    </script>
+  </body>
+</html>

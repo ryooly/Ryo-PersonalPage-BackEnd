@@ -1,0 +1,59 @@
+# Python bytecode & packaging
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.venv.bak/
+
+# Test / lint caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Local config & secrets
+.env
+.env.*
+*.local
+
+# Model weights (set WHISPER_DOWNLOAD_ROOT here if you cache them in-repo)
+models/
+whisper-cache/
+*.bin
+*.onnx
+
+# Editor & OS noise
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and leftover smoke-test artifacts
+*.log
+*.tmp
+tmp/
+_echo_out.txt
+_echo_err.txt
+
+# Microphone recordings; keep the tracked .sample.wav fixture
+*.wav
+!.sample.wav
+!sample.wav
+
+# Test UI: publish the page, ignore anything testing drops in beside it
+testing/*
+!testing/index.html
