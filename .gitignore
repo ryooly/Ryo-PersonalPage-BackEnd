@@ -25,6 +25,7 @@ htmlcov/
 # Local config & secrets
 .env
 .env.*
+!.env.example
 *.local
 
 # Model weights (set WHISPER_DOWNLOAD_ROOT here if you cache them in-repo)

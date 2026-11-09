@@ -3,579 +3,499 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Audio backend — live mic test</title>
+    <title>Voice → AI → TTS test</title>
     <style>
-      :root {
-        color-scheme: light dark;
-      }
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
       body {
-        font-family: system-ui, sans-serif;
-        max-width: 720px;
-        margin: 32px auto;
-        padding: 0 20px;
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+        max-width: 980px;
+        margin: 24px auto;
+        padding: 0 16px 40px;
         line-height: 1.45;
       }
-      h1 {
-        font-size: 1.35rem;
-        margin-bottom: 4px;
-      }
-      .hint {
-        color: #777;
-        font-size: 0.85rem;
-        margin-top: 0;
-      }
-      .row {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        align-items: center;
-        margin: 12px 0;
-      }
-      input[type="text"] {
-        flex: 1 1 260px;
-        padding: 8px 10px;
-        font-size: 14px;
-        border: 1px solid #bbb;
-        border-radius: 6px;
-      }
-      button {
-        padding: 9px 16px;
-        font-size: 15px;
-        cursor: pointer;
-        border: 1px solid #999;
-        border-radius: 6px;
-        background: #fafafa;
-      }
-      button:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
-      }
-      button.primary {
-        background: #2563eb;
-        border-color: #1d4ed8;
-        color: #fff;
-      }
-      button.danger {
-        background: #dc2626;
-        border-color: #b91c1c;
-        color: #fff;
-      }
-      #status {
-        font-weight: 600;
-        margin: 10px 0;
-        color: #555;
-      }
-      #meta {
-        font:
-          12px/1.6 ui-monospace,
-          Consolas,
-          monospace;
-        color: #666;
-        white-space: pre-wrap;
-      }
-      .meter {
-        height: 10px;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        overflow: hidden;
-        background: #eee;
-      }
-      .meter > i {
-        display: block;
-        height: 100%;
-        width: 0%;
-        background: #16a34a;
-        transition: width 60ms linear;
-      }
-      #transcript {
-        min-height: 64px;
-        border: 1px solid #ddd;
-        border-left: 4px solid #2563eb;
-        border-radius: 6px;
-        padding: 12px 14px;
-        background: #f8fafc;
-        font-size: 1.05rem;
-      }
-      #transcript:empty::before {
-        content: "— no result yet —";
-        color: #999;
-      }
-      #log {
-        background: #111827;
-        color: #e5e7eb;
+      h1 { font-size: 1.3rem; margin: 0 0 4px; }
+      h2 { font-size: 1rem; margin: 0 0 8px; }
+      .hint { color: #666; font-size: 0.88rem; margin: 0 0 14px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+      .panel {
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
         padding: 14px;
+        margin: 12px 0;
+        background: rgba(127,127,127,0.03);
+      }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+      label { font-size: 0.88rem; color: #555; display: block; margin-bottom: 4px; }
+      input[type="text"], textarea, select {
+        width: 100%;
+        padding: 9px 10px;
+        font: inherit;
+        border: 1px solid #bbb;
         border-radius: 8px;
-        height: 260px;
-        overflow-y: auto;
-        font:
-          12px/1.55 ui-monospace,
-          Consolas,
-          monospace;
+        background: Canvas;
+        color: CanvasText;
       }
-      #log div {
-        margin-bottom: 3px;
-        white-space: pre-wrap;
-        word-break: break-word;
+      textarea { min-height: 84px; resize: vertical; }
+      .url-row input { flex: 1 1 220px; width: auto; }
+      button {
+        padding: 8px 14px;
+        font: inherit;
+        cursor: pointer;
+        border: 1px solid #9ca3af;
+        border-radius: 8px;
+        background: #f9fafb;
+        color: #111;
       }
-      #log .out {
-        color: #7dd3fc;
+      button:hover:not(:disabled) { filter: brightness(0.97); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      button.primary { background: #2563eb; border-color: #1d4ed8; color: #fff; }
+      button.good { background: #16a34a; border-color: #15803d; color: #fff; }
+      button.danger { background: #dc2626; border-color: #b91c1c; color: #fff; }
+      .status {
+        font-weight: 600;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: #f3f4f6;
+        margin: 10px 0;
+        font-size: 0.92rem;
       }
-      #log .in {
-        color: #a5b4fc;
-      }
-      #log .ok {
-        color: #86efac;
-      }
-      #log .warn {
-        color: #fcd34d;
-      }
-      #log .err {
-        color: #fca5a5;
-      }
-      details {
-        margin-top: 14px;
-        font-size: 0.85rem;
+      .status.ok { background: #dcfce7; color: #166534; }
+      .status.warn { background: #fef3c7; color: #92400e; }
+      .status.err { background: #fee2e2; color: #991b1b; }
+      .meta {
+        font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
         color: #555;
+        white-space: pre-wrap;
+        margin: 6px 0 10px;
       }
-      code {
-        background: #f2f2f2;
-        padding: 1px 4px;
-        border-radius: 3px;
+      audio { width: 100%; margin: 8px 0; }
+      #log {
+        background: #0f172a;
+        color: #e5e7eb;
+        padding: 12px;
+        border-radius: 8px;
+        height: 320px;
+        overflow-y: auto;
+        font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
       }
+      #log div { margin-bottom: 3px; white-space: pre-wrap; word-break: break-word; }
+      #log .sys { color: #94a3b8; }
+      #log .out { color: #7dd3fc; }
+      #log .in { color: #a5b4fc; }
+      #log .ok { color: #86efac; }
+      #log .warn { color: #fcd34d; }
+      #log .err { color: #fca5a5; }
+      code, pre.cmd {
+        background: rgba(127,127,127,0.12);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.92em;
+      }
+      pre.cmd { padding: 10px; overflow-x: auto; margin: 8px 0; }
+      .checklist { margin: 6px 0 0; padding-left: 18px; }
+      .step { display: inline-block; min-width: 1.5em; height: 1.5em; line-height: 1.5em; text-align: center; border-radius: 999px; background: #2563eb; color: #fff; font-size: 0.8rem; font-weight: 700; margin-right: 6px; vertical-align: middle; }
+      .muted { color: #666; font-size: 0.86rem; }
     </style>
   </head>
   <body>
-    <h1>Live voice → text</h1>
+    <h1>Voice input → AI → TTS (WebSocket) test</h1>
     <p class="hint">
-      Streams your microphone as raw <code>pcm_s16le</code> binary frames to
-      <code>ws://localhost:8000/ws/audio</code> and prints what Whisper returns.
+      Workflow: capture speech in the browser → send transcript to <code>POST /api/chat</code> for AI processing → send AI reply to <code>/ws/tts</code> (<code>app/ws_tts.py</code>) → receive <code>tts_start</code>/binary MP3/<code>tts_end</code> and play audio.
     </p>
 
-    <div class="row">
-      <input type="text" id="wsUrl" value="ws://localhost:8000/ws/audio" />
-      <button id="btnConnect" class="primary">Connect</button>
-      <button id="btnDisconnect" class="danger" disabled>Disconnect</button>
+    <div class="panel">
+      <h2>Connections</h2>
+      <div class="grid">
+        <div>
+          <label for="apiBase">Backend HTTP base (AI chat)</label>
+          <input type="text" id="apiBase" value="http://localhost:8000" />
+        </div>
+        <div>
+          <label for="wsUrl">TTS WebSocket URL (<code>/ws/tts</code>)</label>
+          <input type="text" id="wsUrl" value="ws://localhost:8000/ws/tts" />
+        </div>
+      </div>
+      <div class="row">
+        <button id="btnConnect" class="primary">Connect TTS WebSocket</button>
+        <button id="btnDisconnect" class="danger" disabled>Disconnect TTS</button>
+        <button id="btnPing" disabled>Ping TTS</button>
+      </div>
+      <div id="ttsStatus" class="status">TTS status: disconnected</div>
+      <div id="ttsMeta" class="meta"></div>
     </div>
 
-    <div class="row">
-      <button id="btnRecord" disabled>Record</button>
-      <button id="btnStop" disabled>Stop &amp; Transcribe</button>
-      <button id="btnPing" disabled>Ping</button>
-      <button id="btnReset" disabled>Reset buffer</button>
-      <button id="btnClear">Clear log</button>
+    <div class="grid">
+      <div class="panel">
+        <h2><span class="step">1</span> Voice input</h2>
+        <div class="row">
+          <button id="btnMic" class="good">Start microphone</button>
+          <button id="btnMicStop" class="danger" disabled>Stop microphone</button>
+        </div>
+        <label for="lang">Recognition language</label>
+        <select id="lang">
+          <option value="en-US">English (en-US)</option>
+          <option value="id-ID">Indonesian (id-ID)</option>
+          <option value="ja-JP">Japanese (ja-JP)</option>
+          <option value="zh-CN">Chinese (zh-CN)</option>
+          <option value="auto">Browser default</option>
+        </select>
+        <div id="micStatus" class="status">Mic status: idle (uses browser SpeechRecognition)</div>
+        <label for="transcript">Captured / editable transcript</label>
+        <textarea id="transcript" placeholder="Speech transcript appears here. You can edit it before sending to AI."></textarea>
+        <p class="muted">Speech recognition runs in the browser (Web Speech API). For backend Whisper transcription via <code>/ws/audio</code>, use the audio pipeline test; this page focuses on the voice→AI→TTS flow using <code>/ws/tts</code> for speech output.</p>
+      </div>
+
+      <div class="panel">
+        <h2><span class="step">2</span> AI processing</h2>
+        <div class="row">
+          <button id="btnAskAi" class="primary">Send transcript to AI</button>
+          <button id="btnAskAndSpeak" class="good" disabled>Send to AI + speak reply</button>
+        </div>
+        <div id="aiStatus" class="status">AI status: idle</div>
+        <label for="aiReply">AI response (sent to TTS)</label>
+        <textarea id="aiReply" placeholder="AI response appears here. You can edit it before TTS."></textarea>
+        <p class="muted">Calls <code>POST /api/chat</code> with <code>{"text":"..."}</code>. The backend LLM uses the Gemini config from <code>.env</code>.</p>
+      </div>
     </div>
 
-    <p id="status">Status: disconnected</p>
-    <div class="meter"><i id="level"></i></div>
-    <div id="meta"></div>
+    <div class="panel">
+      <h2><span class="step">3</span> TTS output (<code>app/ws_tts.py</code>)</h2>
+      <div class="row">
+        <button id="btnSpeak" class="primary" disabled>Speak AI response via /ws/tts</button>
+        <button id="btnSpeakRaw" disabled>Speak transcript directly</button>
+        <button id="btnClear" type="button">Clear log</button>
+      </div>
+      <audio id="player" controls></audio>
+      <div class="row">
+        <a id="download" style="display:none" download="tts-reply.mp3">Download last audio</a>
+      </div>
+      <div class="muted">Sends <code>{"type":"tts","text":"..."}</code> over the TTS WebSocket. Server returns <code>ready</code>, <code>tts_start</code>, binary MP3 chunks, <code>tts_end</code>, or <code>error</code>.</div>
+    </div>
 
-    <h3>Transcription</h3>
-    <div id="transcript"></div>
+    <div class="panel">
+      <h2>Protocol / flow log</h2>
+      <div id="log" aria-live="polite"></div>
+    </div>
 
-    <h3>Protocol log</h3>
-    <div id="log"></div>
-
-    <details>
-      <summary>What to expect</summary>
-      <p>
-        <strong>Connect</strong> opens the socket, waits for the server's
-        <code>ready</code> frame, then asks for microphone access and sends
-        <code>start</code> with the real capture rate.
-        <strong>Record</strong> begins a new utterance,
-        <strong>Stop &amp; Transcribe</strong> sends <code>stop</code> and waits
-        for the <code>result</code> frame — the socket stays open, so you can
-        transcribe again without reconnecting.
-      </p>
-      <p>
-        The server also echoes each transcription to its own console as
-        <code>[transcribe] 1.23s -&gt; …</code>. Utterances are capped at
-        <code>maxSeconds</code> (30 by default) — past that the backend drops
-        the buffer with <code>buffer_full</code>.
-      </p>
+    <details open>
+      <summary>How to run</summary>
+      <pre class="cmd">cd "C:\Coding Room\personal-page-v2\backend"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000</pre>
+      <p>Open <code>testing/index.html</code> in Chrome/Edge (SpeechRecognition support is best there), or serve it:</p>
+      <pre class="cmd">start .\testing\index.html</pre>
+      <ul class="checklist">
+        <li>Click <strong>Connect TTS WebSocket</strong> and confirm <code>ready</code>.</li>
+        <li>Click <strong>Start microphone</strong>, speak, then <strong>Stop microphone</strong> (or wait for final result).</li>
+        <li>Click <strong>Send to AI + speak reply</strong>, or run steps separately.</li>
+        <li>Confirm log shows <code>/api/chat</code> response, then <code>tts_start</code> → binary frames → <code>tts_end</code> and audio playback.</li>
+      </ul>
     </details>
 
     <script>
       "use strict";
 
-      // Runs inside the audio thread. Forwards every rendered block of mono
-      // Float32 samples to the main thread; outputs stay silent on purpose.
-      const WORKLET_SOURCE = `
-      class PcmTap extends AudioWorkletProcessor {
-        process(inputs) {
-          const input = inputs[0];
-          if (input && input[0] && input[0].length) {
-            this.port.postMessage(input[0].slice(0));  // copy: the buffer is reused
-          }
-          return true;
-        }
-      }
-      registerProcessor('pcm-tap', PcmTap);
-    `;
-
-      const FLUSH_INTERVAL_MS = 100; // ~100 ms binary frames
-      const BATCH_SAMPLES = 1600; // send when this many samples accumulate
-
+      const apiBaseInput = document.getElementById("apiBase");
       const wsUrlInput = document.getElementById("wsUrl");
       const btnConnect = document.getElementById("btnConnect");
       const btnDisconnect = document.getElementById("btnDisconnect");
-      const btnRecord = document.getElementById("btnRecord");
-      const btnStop = document.getElementById("btnStop");
       const btnPing = document.getElementById("btnPing");
-      const btnReset = document.getElementById("btnReset");
+      const btnMic = document.getElementById("btnMic");
+      const btnMicStop = document.getElementById("btnMicStop");
+      const btnAskAi = document.getElementById("btnAskAi");
+      const btnAskAndSpeak = document.getElementById("btnAskAndSpeak");
+      const btnSpeak = document.getElementById("btnSpeak");
+      const btnSpeakRaw = document.getElementById("btnSpeakRaw");
       const btnClear = document.getElementById("btnClear");
-      const statusEl = document.getElementById("status");
-      const metaEl = document.getElementById("meta");
-      const levelEl = document.getElementById("level");
+      const langSelect = document.getElementById("lang");
+      const transcriptInput = document.getElementById("transcript");
+      const aiReplyInput = document.getElementById("aiReply");
+      const ttsStatus = document.getElementById("ttsStatus");
+      const ttsMeta = document.getElementById("ttsMeta");
+      const micStatus = document.getElementById("micStatus");
+      const aiStatus = document.getElementById("aiStatus");
       const logEl = document.getElementById("log");
-      const transcriptEl = document.getElementById("transcript");
+      const player = document.getElementById("player");
+      const download = document.getElementById("download");
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      let recognition = null;
+      let recognizing = false;
 
       let socket = null;
-      let audioContext = null;
-      let mediaStream = null;
-      let tapNode = null;
-      let sourceNode = null;
-      let legacyProcessor = null;
+      let ttsReady = false;
+      let outputFormat = "mp3";
+      let chunks = [];
+      let framesReceived = 0;
+      let bytesReceived = 0;
+      let requestStartedAt = 0;
+      let pendingObjectUrl = null;
+      let speakAfterAi = false;
+      const history = [];
 
-      let pending = []; // queued Float32Array chunks
-      let pendingSamples = 0;
-      let flushTimer = null;
-      let tickTimer = null;
-
-      let recording = false; // server confirmed "started" and we are streaming
-      let startedAt = 0;
-      let limits = null;
-      let framesSent = 0;
-      let bytesSent = 0;
-
+      function now() { return new Date().toLocaleTimeString(); }
       function say(kind, message) {
         const line = document.createElement("div");
         line.className = kind;
-        line.textContent = message;
+        line.textContent = `[${now()}] ${message}`;
         logEl.appendChild(line);
         logEl.scrollTop = logEl.scrollHeight;
       }
-
-      function setStatus(text) {
-        statusEl.textContent = `Status: ${text}`;
-      }
-
+      function setStatus(el, text, cls) { el.textContent = text; el.className = "status" + (cls ? " " + cls : ""); }
       function refreshMeta(extra) {
         const parts = [];
-        if (audioContext)
-          parts.push(`capture: ${audioContext.sampleRate} Hz mono`);
-        if (recording)
-          parts.push(
-            `recording: ${((performance.now() - startedAt) / 1000).toFixed(1)}s`,
-          );
-        parts.push(`frames: ${framesSent} (${bytesSent} bytes)`);
-        if (limits)
-          parts.push(`max: ${limits.maxSeconds}s  min: ${limits.minSeconds}s`);
+        if (socket) parts.push(`socket: ${["CONNECTING","OPEN","CLOSING","CLOSED"][socket.readyState] || socket.readyState}`);
+        parts.push(`tts ready: ${ttsReady}`);
+        if (ttsReady) parts.push(`format: ${outputFormat}`);
+        parts.push(`audio: ${framesReceived} frame(s), ${bytesReceived} bytes`);
         if (extra) parts.push(extra);
-        metaEl.textContent = parts.join("   |   ");
+        ttsMeta.textContent = parts.join("  |  ");
+      }
+      function refreshButtons() {
+        const open = socket && socket.readyState === WebSocket.OPEN;
+        btnConnect.disabled = !!(socket && socket.readyState === WebSocket.CONNECTING);
+        btnDisconnect.disabled = !socket;
+        btnPing.disabled = !open;
+        btnSpeak.disabled = !(open && ttsReady);
+        btnSpeakRaw.disabled = !(open && ttsReady);
+        btnAskAndSpeak.disabled = !(open && ttsReady);
+        btnMic.disabled = recognizing || !SpeechRecognition;
+        btnMicStop.disabled = !recognizing;
       }
 
-      function setButtons(state) {
-        btnConnect.disabled = state !== "idle";
-        btnDisconnect.disabled = state === "idle";
-        btnRecord.disabled = state !== "ready";
-        btnStop.disabled = state !== "recording";
-        btnPing.disabled = state === "idle";
-        btnReset.disabled = state === "idle";
-        wsUrlInput.disabled = state !== "idle";
+      function resetAudio() { chunks = []; framesReceived = 0; bytesReceived = 0; }
+      function playAssembledAudio() {
+        if (!chunks.length) { say("warn", "No audio chunks received from /ws/tts."); return; }
+        const mime = String(outputFormat).startsWith("mp3") ? "audio/mpeg" : "audio/octet-stream";
+        const blob = new Blob(chunks, { type: mime });
+        if (pendingObjectUrl) URL.revokeObjectURL(pendingObjectUrl);
+        pendingObjectUrl = URL.createObjectURL(blob);
+        player.src = pendingObjectUrl;
+        download.href = pendingObjectUrl;
+        download.style.display = "inline";
+        const ms = requestStartedAt ? Math.round(performance.now() - requestStartedAt) : null;
+        player.play().catch((e) => say("warn", `Autoplay blocked: ${e.message}. Press play.`));
+        say("ok", `TTS audio assembled: ${blob.size} bytes (${mime})${ms != null ? `, ~${ms} ms total` : ""}.`);
       }
 
-      // ---------------- audio → pcm_s16le ----------------
-
-      function enqueue(float32) {
-        let peak = 0;
-        for (let i = 0; i < float32.length; i += 8) {
-          const v = Math.abs(float32[i]);
-          if (v > peak) peak = v;
+      function sendTtsJson(payload) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          say("err", "TTS send failed: WebSocket is not open.");
+          return false;
         }
-        levelEl.style.width = `${Math.min(100, Math.round(peak * 140))}%`;
-
-        if (!recording) return;
-        pending.push(float32);
-        pendingSamples += float32.length;
-        if (pendingSamples >= BATCH_SAMPLES) flushAudio();
-      }
-
-      // The backend reads "<i2" and scales by 1/32768, so we quantise the same way.
-      function flushAudio(force) {
-        if (!pendingSamples || !socket || socket.readyState !== WebSocket.OPEN)
-          return;
-        if (!recording && !force) return;
-
-        const int16 = new Int16Array(pendingSamples);
-        let offset = 0;
-        for (const chunk of pending) {
-          for (let i = 0; i < chunk.length; i += 1) {
-            const clamped = Math.max(-1, Math.min(1, chunk[i]));
-            // 32768 would overflow int16, so keep the positive side at 32767.
-            int16[offset++] = Math.max(
-              -32768,
-              Math.min(32767, Math.round(clamped * 32768)),
-            );
-          }
-        }
-        pending = [];
-        pendingSamples = 0;
-
-        socket.send(int16.buffer);
-        framesSent += 1;
-        bytesSent += int16.byteLength;
-        refreshMeta();
-      }
-
-      async function openMicrophone() {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-
-        try {
-          audioContext = new AudioContext({ sampleRate: 16000 });
-        } catch {
-          audioContext = new AudioContext(); // rate unsupported: backend resamples anyway
-        }
-        if (audioContext.state === "suspended") await audioContext.resume();
-
-        sourceNode = audioContext.createMediaStreamSource(mediaStream);
-
-        try {
-          const blobUrl = URL.createObjectURL(
-            new Blob([WORKLET_SOURCE], { type: "application/javascript" }),
-          );
-          await audioContext.audioWorklet.addModule(blobUrl);
-          URL.revokeObjectURL(blobUrl);
-          tapNode = new AudioWorkletNode(audioContext, "pcm-tap", {
-            numberOfOutputs: 1,
-            outputChannelCount: [1],
-          });
-          tapNode.port.onmessage = (event) => enqueue(event.data);
-        } catch (error) {
-          say(
-            "warn",
-            "AudioWorklet unavailable, falling back to ScriptProcessor.",
-          );
-          legacyProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-          legacyProcessor.onaudioprocess = (event) => {
-            const out = event.outputBuffer.getChannelData(0);
-            out.fill(0); // keep the monitor silent
-            enqueue(event.inputBuffer.getChannelData(0));
-          };
-          tapNode = legacyProcessor;
-        }
-
-        sourceNode.connect(tapNode);
-        tapNode.connect(audioContext.destination);
-        say(
-          "ok",
-          `microphone open @ ${audioContext.sampleRate} Hz, ~${(audioContext.baseLatency * 1000).toFixed(0)} ms latency`,
-        );
-      }
-
-      function closeMicrophone() {
-        clearInterval(flushTimer);
-        clearInterval(tickTimer);
-        flushTimer = tickTimer = null;
-        if (tapNode) tapNode.disconnect();
-        if (sourceNode) sourceNode.disconnect();
-        if (legacyProcessor) legacyProcessor.disconnect();
-        if (mediaStream)
-          mediaStream.getTracks().forEach((track) => track.stop());
-        if (audioContext && audioContext.state !== "closed")
-          audioContext.close();
-        tapNode =
-          sourceNode =
-          legacyProcessor =
-          mediaStream =
-          audioContext =
-            null;
-        pending = [];
-        pendingSamples = 0;
-        levelEl.style.width = "0%";
-      }
-
-      // ---------------- protocol ----------------
-
-      function sendJson(payload) {
         socket.send(JSON.stringify(payload));
-        say("out", `→ ${JSON.stringify(payload)}`);
+        const preview = payload.type === "tts" && payload.text
+          ? `{"type":"tts","text":"${payload.text.slice(0, 80)}${payload.text.length > 80 ? "…" : ""}"}`
+          : JSON.stringify(payload);
+        say("out", `TTS WS → ${preview}`);
+        return true;
       }
 
-      function startRecording() {
-        if (!socket || socket.readyState !== WebSocket.OPEN || recording)
+      function speakText(text) {
+        const value = String(text || "").trim();
+        if (!value) { say("warn", "No text to speak."); return; }
+        if (!socket || socket.readyState !== WebSocket.OPEN || !ttsReady) {
+          say("err", "Connect TTS WebSocket first and wait for ready.");
           return;
-        pending = [];
-        pendingSamples = 0;
-        framesSent = 0;
-        bytesSent = 0;
-        sendJson({
-          type: "start",
-          format: { sampleRate: audioContext.sampleRate, channels: 1 },
-        });
-      }
-
-      function stopRecording() {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        flushAudio(true); // push whatever is still buffered, before the flag drops
-        recording = false;
-        clearInterval(flushTimer);
-        clearInterval(tickTimer);
-        flushTimer = tickTimer = null;
-        sendJson({ type: "stop" });
-        setStatus("transcribing…");
-        setButtons("ready");
-      }
-
-      // The backend drops the whole utterance at maxSeconds, so stop a bit earlier.
-      function watchDuration() {
-        if (!recording || !limits) return;
-        const elapsed = (performance.now() - startedAt) / 1000;
-        if (elapsed >= limits.maxSeconds - 0.5) {
-          say(
-            "warn",
-            `reached ${limits.maxSeconds}s limit — stopping automatically`,
-          );
-          stopRecording();
         }
+        resetAudio();
+        requestStartedAt = performance.now();
+        setStatus(ttsStatus, "TTS status: synthesizing…", "warn");
+        if (sendTtsJson({ type: "tts", text: value })) refreshMeta("tts request sent");
       }
 
-      function handleControl(message) {
-        say("in", `← ${JSON.stringify(message)}`);
-
+      function handleTtsControl(message) {
+        say("in", `TTS WS ← ${JSON.stringify(message)}`);
         switch (message.type) {
           case "ready":
-            limits = message.limits;
-            setButtons("ready");
-            btnRecord.disabled = true; // enabled once the mic is open
-            setStatus("connected — opening microphone");
-            openMicrophone()
-              .then(startRecording)
-              .catch((error) => {
-                say("err", `microphone failed: ${error.message}`);
-                setStatus("mic permission denied");
-              });
-            break;
-
-          case "started":
-            recording = true;
-            startedAt = performance.now();
-            flushTimer = setInterval(() => flushAudio(), FLUSH_INTERVAL_MS);
-            tickTimer = setInterval(watchDuration, 250);
-            btnRecord.disabled = true;
-            btnStop.disabled = false;
-            setStatus("recording — speak now");
-            setButtons("recording");
-            break;
-
-          case "processing":
-            setStatus(`buffered ${message.duration}s — sending to model`);
-            break;
-
-          case "result": {
-            const text = message.text ?? "";
-            transcriptEl.textContent =
-              text || "(empty — the engine heard no speech)";
-            const info = message.data || {};
-            if (info.language)
-              say(
-                "ok",
-                `language: ${info.language} (${((info.languageProbability ?? 0) * 100).toFixed(0)}%)`,
-              );
-            setStatus("result received — press Record to go again");
-            setButtons("ready");
-            break;
-          }
-
-          case "error":
-            say("err", `error [${message.code}] ${message.message}`);
-            setStatus(`error: ${message.code}`);
-            if (
-              ["buffer_full", "too_short", "not_started"].includes(message.code)
-            ) {
-              recording = false;
-              clearInterval(flushTimer);
-              clearInterval(tickTimer);
-              flushTimer = tickTimer = null;
-              setButtons("ready");
-            }
-            break;
-
+            ttsReady = true;
+            outputFormat = message.format || outputFormat;
+            setStatus(ttsStatus, "TTS status: connected, ready", "ok");
+            refreshButtons(); refreshMeta(); break;
+          case "tts_start":
+            outputFormat = message.format || outputFormat;
+            setStatus(ttsStatus, "TTS status: receiving audio…", "warn");
+            refreshMeta("streaming"); break;
+          case "tts_end":
+            playAssembledAudio();
+            setStatus(ttsStatus, `TTS status: done (${message.frames} frame(s))`, "ok");
+            refreshMeta("complete"); break;
           case "pong":
-            setStatus("connected (pong)");
-            break;
-
-          case "reset":
-            say("warn", "buffer cleared");
-            break;
-
+            setStatus(ttsStatus, "TTS status: pong received", "ok"); refreshMeta("pong"); break;
+          case "error":
+            say("err", `TTS error [${message.code}] ${message.message}`);
+            setStatus(ttsStatus, `TTS status: error ${message.code}`, "err");
+            if (message.code === "tts_unavailable") { disconnectTts(); }
+            refreshMeta(message.code); break;
           default:
-            break;
+            say("warn", `Unhandled TTS message: ${message.type}`);
         }
       }
 
-      function connect() {
+      function connectTts() {
         const url = wsUrlInput.value.trim();
-        transcriptEl.textContent = "";
-        say("ok", `connecting to ${url}`);
-
-        socket = new WebSocket(url);
+        if (!url) return;
+        disconnectTts(false);
+        ttsReady = false; resetAudio();
+        setStatus(ttsStatus, "TTS status: connecting…", "warn");
+        refreshButtons();
+        say("sys", `Connecting TTS WebSocket: ${url}`);
+        try { socket = new WebSocket(url); }
+        catch (e) {
+          say("err", `WebSocket create failed: ${e.message}`);
+          setStatus(ttsStatus, "TTS status: invalid URL", "err");
+          socket = null; refreshButtons(); return;
+        }
         socket.binaryType = "arraybuffer";
-
-        socket.onopen = () => setStatus('socket open — waiting for "ready"');
-        socket.onmessage = (event) => {
-          if (typeof event.data !== "string") return; // the server only sends JSON
-          try {
-            handleControl(JSON.parse(event.data));
-          } catch (error) {
-            say("err", `bad frame: ${error.message}`);
-          }
-        };
-        socket.onerror = () =>
-          say("err", "socket error — is uvicorn running on port 8000?");
-        socket.onclose = () => {
-          recording = false;
-          closeMicrophone();
-          setButtons("idle");
-          setStatus("disconnected");
+        socket.onopen = () => {
+          say("ok", "TTS socket open; waiting for ready frame (ws_tts.py).");
+          setStatus(ttsStatus, 'TTS status: open, waiting for "ready"', "warn");
           refreshMeta();
         };
-        setButtons("connecting");
+        socket.onmessage = (event) => {
+          if (typeof event.data !== "string") {
+            chunks.push(event.data);
+            framesReceived += 1;
+            bytesReceived += event.data.byteLength || 0;
+            if (framesReceived === 1 || framesReceived % 10 === 0) refreshMeta(`streaming ${framesReceived}`);
+            return;
+          }
+          try { handleTtsControl(JSON.parse(event.data)); }
+          catch (e) { say("err", `Bad TTS text frame: ${e.message}`); }
+        };
+        socket.onerror = () => {
+          say("err", "TTS WebSocket error. Is the backend running on the configured port?");
+          refreshMeta("socket error");
+        };
+        socket.onclose = (event) => {
+          say(event.code === 1000 ? "sys" : "warn", `TTS socket closed (code=${event.code}${event.reason ? " reason="+event.reason : ""}).`);
+          ttsReady = false; socket = null;
+          setStatus(ttsStatus, event.code === 1000 ? "TTS status: disconnected" : `TTS status: closed ${event.code}`, event.code === 1000 ? "" : "err");
+          refreshButtons(); refreshMeta();
+        };
       }
 
-      function disconnect() {
-        recording = false;
-        closeMicrophone();
+      function disconnectTts(log = true) {
         if (socket) {
-          socket.close();
+          if (log) say("sys", "Closing TTS WebSocket.");
+          try { socket.close(1000, "client disconnect"); } catch {}
           socket = null;
         }
-        setButtons("idle");
-        setStatus("disconnected");
-        refreshMeta();
+        ttsReady = false;
+        refreshButtons(); refreshMeta();
       }
 
-      btnConnect.onclick = connect;
-      btnDisconnect.onclick = disconnect;
-      btnRecord.onclick = startRecording;
-      btnStop.onclick = stopRecording;
-      btnPing.onclick = () => socket && sendJson({ type: "ping" });
-      btnReset.onclick = () => socket && sendJson({ type: "reset" });
-      btnClear.onclick = () => {
-        logEl.textContent = "";
-      };
+      async function sendToAi(speakAfter) {
+        const text = transcriptInput.value.trim();
+        if (!text) { say("warn", "Transcript is empty. Capture voice or type text first."); return; }
+        speakAfterAi = !!speakAfter;
+        setStatus(aiStatus, "AI status: processing…", "warn");
+        btnAskAi.disabled = true; btnAskAndSpeak.disabled = true;
+        const base = apiBaseInput.value.replace(/\/$/, "");
+        const url = base + "/api/chat";
+        say("out", `HTTP POST ${url} :: ${JSON.stringify({text: text.slice(0, 120) + (text.length > 120 ? "…" : "")})}`);
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, history: history.slice(-12) })
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const detail = body && body.detail ? body.detail : res.statusText;
+            throw new Error(`HTTP ${res.status}: ${detail}`);
+          }
+          const reply = String(body.text || "").trim();
+          aiReplyInput.value = reply;
+          history.push({ role: "user", content: text });
+          history.push({ role: "assistant", content: reply });
+          setStatus(aiStatus, "AI status: response received", "ok");
+          say("ok", `AI reply (${reply.length} chars): ${reply.slice(0, 160)}${reply.length > 160 ? "…" : ""}`);
+          if (speakAfterAi) {
+            if (ttsReady) speakText(reply);
+            else say("warn", "AI reply ready, but TTS WebSocket is not connected/ready.");
+          }
+        } catch (e) {
+          setStatus(aiStatus, `AI status: error`, "err");
+          say("err", `AI request failed: ${e.message}. Ensure backend is running and /api/chat is available (CORS/same-origin if needed).`);
+        } finally {
+          btnAskAi.disabled = false;
+          refreshButtons();
+        }
+      }
 
-      window.addEventListener("beforeunload", () => {
-        if (socket) socket.close();
+      function initSpeechRecognition() {
+        if (!SpeechRecognition) {
+          setStatus(micStatus, "Mic status: SpeechRecognition not supported in this browser. Use Chrome/Edge or type text manually.", "err");
+          say("warn", "Browser SpeechRecognition unavailable. Manual transcript entry still works.");
+          return;
+        }
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.onstart = () => {
+          recognizing = true;
+          setStatus(micStatus, "Mic status: listening…", "ok");
+          say("ok", "Microphone recognition started.");
+          refreshButtons();
+        };
+        recognition.onresult = (event) => {
+          let finalText = transcriptInput.value;
+          let interim = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const result = event.results[i];
+            const text = result[0] && result[0].transcript ? result[0].transcript : "";
+            if (result.isFinal) {
+              finalText = (finalText ? finalText.trim() + " " : "") + text.trim();
+              say("sys", `Speech final: ${text.trim()}`);
+            } else {
+              interim += text;
+            }
+          }
+          transcriptInput.value = finalText;
+          setStatus(micStatus, interim ? `Mic status: listening… "${interim.trim().slice(0, 60)}"` : "Mic status: listening…", "ok");
+        };
+        recognition.onerror = (event) => {
+          say("err", `SpeechRecognition error: ${event.error}`);
+          setStatus(micStatus, `Mic status: error (${event.error})`, "err");
+        };
+        recognition.onend = () => {
+          recognizing = false;
+          setStatus(micStatus, "Mic status: stopped", transcriptInput.value.trim() ? "ok" : "");
+          say("sys", "Microphone recognition stopped.");
+          refreshButtons();
+        };
+      }
+
+      function startMic() {
+        if (!recognition) initSpeechRecognition();
+        if (!recognition) return;
+        const lang = langSelect.value;
+        recognition.lang = lang === "auto" ? (navigator.language || "en-US") : lang;
+        try { recognition.start(); }
+        catch (e) { say("warn", `Recognition start: ${e.message}`); }
+      }
+      function stopMic() { if (recognition && recognizing) try { recognition.stop(); } catch {} }
+
+      btnConnect.onclick = connectTts;
+      btnDisconnect.onclick = () => disconnectTts();
+      btnPing.onclick = () => sendTtsJson({ type: "ping" });
+      btnMic.onclick = startMic;
+      btnMicStop.onclick = stopMic;
+      btnAskAi.onclick = () => sendToAi(false);
+      btnAskAndSpeak.onclick = () => sendToAi(true);
+      btnSpeak.onclick = () => speakText(aiReplyInput.value);
+      btnSpeakRaw.onclick = () => speakText(transcriptInput.value);
+      btnClear.onclick = () => { logEl.textContent = ""; };
+      transcriptInput.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); sendToAi(true); }
       });
-      setButtons("idle");
+      window.addEventListener("beforeunload", () => { stopMic(); disconnectTts(false); });
+
+      initSpeechRecognition();
+      refreshButtons(); refreshMeta();
+      say("ok", "Ready. Start backend, connect TTS WebSocket, then capture voice / ask AI / speak reply.");
     </script>
   </body>
 </html>

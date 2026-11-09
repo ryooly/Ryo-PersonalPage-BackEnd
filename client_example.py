@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 import time
-import wave
+import wave 
 
 from websockets.sync.client import connect
 

@@ -10,7 +10,10 @@ from starlette.websockets import WebSocketState
 
 from .audio import AudioBuffer
 from .config import ENCODING, AudioSettings
+from .llm_model import GPTModel
 from .model import AudioModel
+from .response_audio import generate_voice_response
+from .tts_model import TTSModel
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,8 @@ async def stream_audio_session(
     websocket: WebSocket,
     model: AudioModel,
     settings: AudioSettings,
+    llm: GPTModel | None = None,
+    tts: TTSModel | None = None,
 ) -> SessionStats:
     stats = SessionStats()
 
@@ -73,7 +78,7 @@ async def stream_audio_session(
                 continue
 
             stats, session, buffer, recording, done = await _handle_control(
-                websocket, text, model, settings, stats, session, buffer, recording
+                websocket, text, model, llm, tts, settings, stats, session, buffer, recording
             )
             if done:
                 break
@@ -130,6 +135,8 @@ async def _handle_control(
     websocket: WebSocket,
     text: str,
     model: AudioModel,
+    llm: GPTModel | None,
+    tts: TTSModel | None,
     base_settings: AudioSettings,
     stats: SessionStats,
     session: AudioSettings,
@@ -175,7 +182,7 @@ async def _handle_control(
                 websocket,
                 "too_short",
                 f"Audio is {utterance.duration:.2f}s, the minimum is {session.min_seconds:.2f}s.",
-            )
+            ) # ganti bagian ini jadi response ai terhadap aksi users (menggunkan tts)
             return stats, session, next_buffer, False, False
 
         sent = await _send(
@@ -189,23 +196,28 @@ async def _handle_control(
         if not sent:
             return stats, session, next_buffer, False, True
 
+        if llm is None or tts is None:
+            await _error(
+                websocket,
+                "pipeline_unavailable",
+                "The voice response pipeline (LLM + TTS) is not configured.",
+            )
+            return stats, session, next_buffer, False, False
+
         try:
-            result = await model.transcribe(utterance)
-            print(f"[transcribe] {utterance.duration:.2f}s -> {result.text if result else None}", flush=True)
+            response_text = await generate_voice_response(
+                websocket, utterance, model, llm, tts
+            )
+            print(f"[pipeline] {utterance.duration:.2f}s -> {response_text!r}", flush=True)
         except Exception:
-            logger.exception("model.transcribe failed on %.2fs of audio", utterance.duration)
-            await _error(websocket, "model_failed", "The model raised an exception; check the server log.")
+            logger.exception("voice response failed on %.2fs of audio", utterance.duration)
+            await _error(websocket, "pipeline_failed", "The response pipeline raised an exception; check the server log.")
             return stats, session, next_buffer, False, False
 
         stats.utterances += 1
         delivered = await _send(
             websocket,
-            {
-                "type": "result",
-                "audio": utterance.describe(),
-                "text": result.text if result else None,
-                "data": result.data if result else {},
-            },
+            {"type": "turn_complete", "audio": utterance.describe(), "text": response_text},
         )
         return stats, session, next_buffer, False, not delivered
 
@@ -270,4 +282,10 @@ async def audio_socket(websocket: WebSocket) -> None:
         websocket,
         websocket.app.state.audio_model,
         websocket.app.state.audio_settings,
+        websocket.app.state.llm_model,
+        websocket.app.state.tts_model,
     )
+
+
+
+# tambahkan beberpa feature penting, apila users berbicara terlalu panjang maka akan secara otomatis diehentikan kemudain untuk repsojn kek ucapa yang terllau panang dll juga akan ddihentikan dan dilempari suara ai 

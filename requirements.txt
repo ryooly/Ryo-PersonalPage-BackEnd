@@ -1,3 +1,7 @@
 fastapi>=0.115
 uvicorn[standard]>=0.32
 faster-whisper>=1.1
+openai>=1.40
+python-dotenv>=1.0
+edge-tts>=6.1
+google-genai>=1.0
