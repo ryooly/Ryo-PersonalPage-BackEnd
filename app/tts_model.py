@@ -53,22 +53,9 @@ class TTSModel:
         websocket: WebSocket,
         meta: dict[str, Any] | None = None,
     ) -> int:
-        payload: dict[str, Any] = {"type": "tts_start", "format": self.output_format}
-        if meta:
-            payload.update(meta)
-        await websocket.send_json(payload)
+        from .speak_error import stream_text_over_websocket
 
-        iterator = iter(self.synthesize_stream(text))
-        frames = 0
-        while True:
-            chunk = await asyncio.to_thread(next, iterator, None)
-            if chunk is None:
-                break
-            await websocket.send_bytes(chunk)
-            frames += 1
-
-        await websocket.send_json({"type": "tts_end", "frames": frames})
-        return frames
+        return await stream_text_over_websocket(text, websocket, self, meta=meta)
 
 
 

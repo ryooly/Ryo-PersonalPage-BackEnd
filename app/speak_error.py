@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from fastapi import WebSocket
 
-from .tts_model import TTSModel
+if TYPE_CHECKING:
+    from .tts_model import TTSModel
 
 # Simple in-memory cache: normalized text + voice settings -> synthesized audio chunks.
 # This allows repeated messages to be streamed immediately without waiting for synthesis.
@@ -89,13 +90,16 @@ async def stream_text_over_websocket(
     loop = asyncio.get_running_loop()
 
     def produce() -> None:
-        try:
-            for chunk in tts.synthesize_stream(cleaned):
+      try:
+        for chunk in tts.synthesize_stream(cleaned):
+            try:
                 # Send chunk to async sender immediately; do not wait for full synthesis.
                 asyncio.run_coroutine_threadsafe(queue.put(chunk), loop).result()
-            asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
-        except BaseException as exc:  # pragma: no cover - surfaced to caller
-            asyncio.run_coroutine_threadsafe(queue.put(exc), loop).result()
+            except Exception:
+                break
+        asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+      except BaseException as exc:  # pragma: no cover - surfaced to caller
+        asyncio.run_coroutine_threadsafe(queue.put(exc), loop).result()
 
     producer = asyncio.create_task(asyncio.to_thread(produce))
     frames = 0
@@ -133,20 +137,29 @@ async def stream_text_over_websocket(
 async def speak_error(
     text: str,
     websocket: WebSocket,
-    tts: TTSModel,
+    tts: "TTSModel | None",
+    code: str = "error",
     meta: dict[str, Any] | None = None,
 ) -> int:
     """Replace an error text response by speaking it through TTS.
 
-    Accepts the error/message text and processes it through the websocket TTS
-    streaming flow (equivalent to TTSModel.stream_over_websocket) with caching.
+    Always sends the JSON error frame. If a TTS model is available, also speaks
+    the message through the websocket TTS streaming flow with caching.
     """
     message = " ".join((text or "").split()) or "An error occurred."
-    merged_meta: dict[str, Any] = {"spoken_error": True, "text": message}
+    error_payload: dict[str, Any] = {"type": "error", "code": code, "message": message}
+    await websocket.send_json(error_payload)
+    if tts is None:
+        return 0
+    merged_meta: dict[str, Any] = {"spoken_error": True, "code": code, "text": message}
     if meta:
         merged_meta.update(meta)
-    return await stream_text_over_websocket(message, websocket, tts, meta=merged_meta)
+    try:
+        return await stream_text_over_websocket(message, websocket, tts, meta=merged_meta)
+    except Exception:
+        # Error JSON was already delivered; do not fail the caller if speech fails.
+        return 0
 
 
 
-# edited 2moro
+# edited 2moro (harusnya koneksikan dengan tts model)

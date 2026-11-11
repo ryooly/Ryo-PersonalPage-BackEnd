@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from .speak_error import speak_error
 from .tts_model import TTSModel
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ async def tts_session(websocket: WebSocket, tts: TTSModel | None) -> None:
             try:
                 payload: dict[str, Any] = json.loads(message)
             except json.JSONDecodeError:
-                await _error(websocket, "bad_json", "Expected a JSON control frame.")
+                await _error(websocket, tts, "bad_json", "Expected a JSON control frame.")
                 continue
 
             if payload.get("type") == "ping":
@@ -48,12 +49,13 @@ async def tts_session(websocket: WebSocket, tts: TTSModel | None) -> None:
 
             text = payload.get("text")
             if not isinstance(text, str) or not text.strip():
-                await _error(websocket, "empty_text", 'Send {"type": "tts", "text": "..."} with non-empty text.')
+                await _error(websocket, tts, "empty_text", 'Send {"type": "tts", "text": "..."} with non-empty text.')
                 continue
 
             if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
                 await _error(
                     websocket,
+                    tts,
                     "text_too_long",
                     f"Text exceeds the {MAX_TEXT_BYTES}-byte limit.",
                 )
@@ -72,8 +74,8 @@ async def _send(websocket: WebSocket, payload: dict[str, Any]) -> None:
     await websocket.send_json(payload)
 
 
-async def _error(websocket: WebSocket, code: str, message: str) -> None:
-    await _send(websocket, {"type": "error", "code": code, "message": message})
+async def _error(websocket: WebSocket, tts: TTSModel, code: str, message: str) -> None:
+    await speak_error(message, websocket, tts, code=code)
 
 
 @router.websocket("/ws/tts")

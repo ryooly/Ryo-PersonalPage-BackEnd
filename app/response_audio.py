@@ -7,6 +7,7 @@ from fastapi import WebSocket
 from .audio import AudioBuffer
 from .llm_model import GPTModel
 from .model import AudioModel
+from .speak_error import speak_error
 from .tts_model import TTSModel
 
 logger = logging.getLogger(__name__)
@@ -45,9 +46,7 @@ async def generate_voice_response(
     result = await transcriber.transcribe(audio)
     transcript = result.text if result else ""
     if not transcript or not transcript.strip():
-        await websocket.send_json(
-            {"type": "error", "code": "empty_transcript", "message": "No speech detected."}
-        )
+        await speak_error("No speech detected.", websocket, tts, code="empty_transcript")
         return ""
 
     await websocket.send_json({"type": "transcript", "text": transcript})
@@ -78,9 +77,7 @@ async def generate_voice_response(
 
     response_text = response_text.strip()
     if not response_text:
-        await websocket.send_json(
-            {"type": "error", "code": "empty_response", "message": "The model returned no text."}
-        )
+        await speak_error("The model returned no text.", websocket, tts, code="empty_response")
         return ""
 
     return response_text

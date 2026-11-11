@@ -13,6 +13,7 @@ from .config import ENCODING, AudioSettings
 from .llm_model import GPTModel
 from .model import AudioModel
 from .response_audio import generate_voice_response
+from .speak_error import speak_error
 from .tts_model import TTSModel
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ async def stream_audio_session(
             chunk = message.get("bytes")
             if chunk is not None:
                 stats, session, buffer, recording = await _handle_audio_frame(
-                    websocket, chunk, stats, session, buffer, recording
+                    websocket, chunk, stats, session, buffer, recording, tts
                 )
                 continue
 
@@ -102,16 +103,18 @@ async def _handle_audio_frame(
     session: AudioSettings,
     buffer: AudioBuffer,
     recording: bool,
+    tts: TTSModel | None,
 ) -> tuple[SessionStats, AudioSettings, AudioBuffer, bool]:
     if not recording:
         stats.rejected_chunks += 1
-        await _error(websocket, "not_started", 'Send {"type": "start"} before streaming audio.')
+        await _error(websocket, tts, "not_started", 'Send {"type": "start"} before streaming audio.')
         return stats, session, buffer, recording
 
     if len(chunk) > session.max_chunk_bytes:
         stats.rejected_chunks += 1
         await _error(
             websocket,
+            tts,
             "chunk_too_large",
             f"Frame is {len(chunk)} bytes, the limit is {session.max_chunk_bytes}.",
         )
@@ -123,6 +126,7 @@ async def _handle_audio_frame(
     if buffer.byte_count > session.max_bytes:
         await _error(
             websocket,
+            tts,
             "buffer_full",
             f"Utterance exceeded {session.max_seconds:.0f}s; the buffer was dropped.",
         )
@@ -146,20 +150,20 @@ async def _handle_control(
     try:
         event = json.loads(text)
     except json.JSONDecodeError:
-        await _error(websocket, "bad_json", "Text frames must contain JSON.")
+        await _error(websocket, tts, "bad_json", "Text frames must contain JSON.")
         return stats, session, buffer, recording, False
 
     if not isinstance(event, dict):
-        await _error(websocket, "bad_json", "Expected a JSON object.")
+        await _error(websocket, tts, "bad_json", "Expected a JSON object.")
         return stats, session, buffer, recording, False
 
-    kind = event.get("type") 
+    kind = event.get("type")
 
     if kind == "start":
         try:
             session = _resolve_format(base_settings, event.get("format"))
         except ValueError as exc:
-            await _error(websocket, "unsupported_format", str(exc))
+            await _error(websocket, tts, "unsupported_format", str(exc))
             return stats, session, buffer, recording, False
 
         await _send(websocket, {"type": "started", "format": session.wire_format()})
@@ -167,22 +171,23 @@ async def _handle_control(
 
     if kind == "stop":
         if not recording:
-            await _error(websocket, "not_started", "Nothing is being recorded.")
+            await _error(websocket, tts, "not_started", "Nothing is being recorded.")
             return stats, session, buffer, recording, False
 
         utterance = buffer.finish()
         next_buffer = AudioBuffer(session)
 
         if utterance.byte_count == 0:
-            await _error(websocket, "too_short", "No audio arrived before stop.")
+            await _error(websocket, tts, "too_short", "No audio arrived before stop.")
             return stats, session, next_buffer, False, False
 
         if utterance.byte_count < session.min_bytes:
             await _error(
                 websocket,
+                tts,
                 "too_short",
                 f"Audio is {utterance.duration:.2f}s, the minimum is {session.min_seconds:.2f}s.",
-            ) # ganti bagian ini jadi response ai terhadap aksi users (menggunkan tts)
+            )  # ganti bagian ini jadi response ai terhadap aksi users (menggunkan tts)
             return stats, session, next_buffer, False, False
 
         sent = await _send(
@@ -199,6 +204,7 @@ async def _handle_control(
         if llm is None or tts is None:
             await _error(
                 websocket,
+                tts,
                 "pipeline_unavailable",
                 "The voice response pipeline (LLM + TTS) is not configured.",
             )
@@ -211,7 +217,12 @@ async def _handle_control(
             print(f"[pipeline] {utterance.duration:.2f}s -> {response_text!r}", flush=True)
         except Exception:
             logger.exception("voice response failed on %.2fs of audio", utterance.duration)
-            await _error(websocket, "pipeline_failed", "The response pipeline raised an exception; check the server log.")
+            await _error(
+                websocket,
+                tts,
+                "pipeline_failed",
+                "The response pipeline raised an exception; check the server log.",
+            )
             return stats, session, next_buffer, False, False
 
         stats.utterances += 1
@@ -229,7 +240,7 @@ async def _handle_control(
         await _send(websocket, {"type": "pong"})
         return stats, session, buffer, recording, False
 
-    await _error(websocket, "unknown_type", f"Unknown event type: {kind!r}.")
+    await _error(websocket, tts, "unknown_type", f"Unknown event type: {kind!r}.")
     return stats, session, buffer, recording, False
 
 
@@ -272,8 +283,8 @@ async def _send(websocket: WebSocket, payload: dict[str, Any]) -> bool:
         return False
 
 
-async def _error(websocket: WebSocket, code: str, message: str) -> None:
-    await _send(websocket, {"type": "error", "code": code, "message": message})
+async def _error(websocket: WebSocket, tts: TTSModel | None, code: str, message: str) -> None:
+    await speak_error(message, websocket, tts, code=code)
 
 
 @router.websocket("/ws/audio")
